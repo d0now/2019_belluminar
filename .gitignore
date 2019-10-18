@@ -1,4 +1,4 @@
-.zip
-.tar.gz
-.elf
-.elf64
+*.zip
+*.tar.gz
+*.elf
+*.elf64
