@@ -15,101 +15,64 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include "main.h"
 #include "binder.h"
 
-#define BINDER_SERVICE_SMS 0
+void dump_filter(struct connection *conn) {
+    struct filter *filt, *now;
 
-#define PING_TRANSACTION 0
-
-#define SERVER_PORT 31447
-
-#define CLIENT_COUNT 16
-
-#define SVC_CREATE_SERVER   0x13370000
-#define SVC_CREATE_CLIENT   0x13370001
-#define SVC_CLOSE           0x13370002
-#define SVC_CREATE_FILTER   0x13370003
-
-uint16_t svcid[] = {
-    's', 'u', 'p', 'e', 'r', '_', 
-    'm', 'o', 'd', 'e', 'r', 'n', '_', 
-    's', 'e', 'r', 'v', 'i', 'c', 'e'
-};
-
-struct connection {
-    char name[64];
-    int sock;
-    struct sockaddr_in server_addr;
-    struct sockaddr_in client_addr;
-    struct filter *filters_head;
-};
-
-struct filter {
-    struct filter *next;
-    struct filter *prev;
-    struct sockaddr_in addr;
-    char desc[64];
-    int refcount;
-};
-
-void filter_dump(struct filter *filt) {
-
-    struct filter *now;
-
+    filt = conn->filters_head;
     for (now = filt ; now->next != NULL ; now = now->next) {
-        printf("========================\n");
-        printf("[%p, %p, %p]\n", now->prev, now, now->next);
-        printf("refcount=%d\n", now->refcount);
+        puts("==============================");
+        printf("struct now(%p) {\n", now);
+        printf("\tnext=%p;\n", now->next);
+        printf("\tprev=%p;\n", now->prev);
+        printf("\taddr=%x;\n", now->addr.sin_addr.s_addr);
+        printf("\tdesc=%x;\n", *(unsigned int*)now->desc);
+        printf("\trefcount=%x;\n", now->refcount);
+        puts("};");
     }
-        printf("========================\n");
-        printf("[%p, %p, %p]\n", now->prev, now, now->next);
-        printf("refcount=%d\n", now->refcount);
-    printf("========================\n");
+    puts("==============================");
+    printf("struct now(%p) {\n", now);
+    printf("\tnext=%p;\n", now->next);
+    printf("\tprev=%p;\n", now->prev);
+    printf("\taddr=%x;\n", now->addr.sin_addr.s_addr);
+    printf("\tdesc=%x;\n", *(unsigned int*)now->desc);
+    printf("\trefcount=%x;\n", now->refcount);
+    puts("};");
+    puts("==============================");
 }
 
-int filter_free(struct filter *filt) {
-    if (filt->refcount == 0)
-        free(filt);
+int create_filter(struct connection *conn,
+                  const char *filter_ip, const char *filter_desc) {
+
+    struct filter *filt, *prev;
+    struct sockaddr_in filter_addr;
+
+    if (conn == NULL || filter_ip == NULL || filter_desc == NULL)
+        return -1;
+
+    memset(&filter_addr, 0, sizeof(filter_addr));
+    if (inet_pton(AF_INET, filter_ip, &(filter_addr.sin_addr)) != 1)
+        return -1;
+
+    if ((filt = calloc(sizeof(*filt), 1)) == NULL)
+        return -1;
+
+    if (conn->filters_head) {
+        prev = filter_get_last(conn->filters_head);
+        filt->prev = prev;
+        prev->next = filt;
+        filter_ref_inc(filt);
+        filter_ref_inc(prev);
+    }
     else {
-        fprintf(stderr, "Fatal: Detected double free\n");
-        exit(0);
+        conn->filters_head = filt;
+        filter_ref_inc(filt);
     }
-}
 
-int filter_ref_inc(struct filter *filt) {
-    return filt->refcount++;
-}
-
-int filter_ref_dec(struct filter *filt) {
-    if (filt->refcount)
-        filt->refcount--;
-    return filt->refcount;
-}
-
-struct filter *filter_get_last(struct filter *filt) {
-
-    struct filter *now;
-
-    if (filt == NULL)
-        return 0;
-
-    for (now = filt ; now->next != NULL ; now = now->next);
-    if (now && now->next == NULL)
-        return now;
-
-    return 0;
-}
-
-struct filter *filter_get_head(struct filter *filt) {
-
-    struct filter *now;
-
-    if (filt == NULL)
-        return 0;
-
-    for (now = filt ; now->prev != NULL ; now = now->prev);
-    if (now && now->next == NULL)
-        return now;
+    memcpy(&filt->addr, &filter_addr, sizeof(filt->addr));
+    strncpy(filt->desc, filter_desc, sizeof(filt->desc));
 
     return 0;
 }
@@ -188,6 +151,136 @@ int filter_cleanup(struct connection *conn) {
     return 0;
 }
 
+int filter_free(struct filter *filt) {
+    if (filt->refcount == 0)
+        free(filt);
+    else {
+        fprintf(stderr, "Fatal: Detected double free\n");
+        exit(0);
+    }
+}
+
+int filter_ref_inc(struct filter *filt) {
+    return filt->refcount++;
+}
+
+int filter_ref_dec(struct filter *filt) {
+    if (filt->refcount)
+        filt->refcount--;
+    return filt->refcount;
+}
+
+struct filter *filter_get_last(struct filter *filt) {
+
+    struct filter *now;
+
+    if (filt == NULL)
+        return 0;
+
+    for (now = filt ; now->next != NULL ; now = now->next);
+    if (now && now->next == NULL)
+        return now;
+
+    return 0;
+}
+
+struct filter *filter_get_head(struct filter *filt) {
+
+    struct filter *now;
+
+    if (filt == NULL)
+        return 0;
+
+    for (now = filt ; now->prev != NULL ; now = now->prev);
+    if (now && now->next == NULL)
+        return now;
+
+    return 0;
+}
+
+struct filter *filter_find(struct connection *conn, const char *filter_ip) {
+
+    struct filter *now;
+    struct sockaddr_in filter_addr;
+    int found;
+
+    if (conn == NULL || filter_ip == NULL)
+        return 0;
+
+    memset(&filter_addr, 0, sizeof(filter_addr));
+    if (inet_pton(AF_INET, filter_ip, &(filter_addr.sin_addr)) != 1)
+        return 0;
+
+    for (now = conn->filters_head ; now->next != NULL ; now = now->next) {
+        if (now->addr.sin_addr.s_addr == filter_addr.sin_addr.s_addr) {
+            found = 1;
+            break;
+        }
+    }
+    if (now->addr.sin_addr.s_addr == filter_addr.sin_addr.s_addr)
+        found = 1;
+
+    if (found)
+        return now;
+    return 0;
+}
+
+int filter_edit_desc(struct connection *conn, const char *filter_ip, const char *filter_desc) {
+
+    struct filter *filt;
+
+    if (conn == NULL || filter_ip == NULL || filter_desc == NULL)
+        return -1;
+
+    if ((filt = filter_find(conn, filter_ip)) == NULL)
+        return -1;
+
+    strncpy(filt->desc, filter_desc, sizeof(filt->desc));
+    return 0;
+}
+
+int filter_dump_desc(struct connection *conn, const char *filter_ip, char *filter_desc) {
+
+    struct filter *filt;
+
+    if (conn == NULL || filter_ip == NULL || filter_desc == NULL)
+        return -1;
+
+    if ((filt = filter_find(conn, filter_ip)) == NULL)
+        return -1;
+
+    strncpy(filter_desc, filt->desc, sizeof(filt->desc));
+    return 0;
+}
+
+void *client_recv(struct connection *conn) {
+
+    int r;
+    size_t size;
+    void *data;
+
+    if (conn == NULL || conn->is_server)
+        return 0;
+
+    r = read(conn->sock, &size, sizeof(size));
+    if (r != sizeof(size))
+        return 0;
+
+    if (size < 0 && size > 0x1000)
+        size = 0x1000;
+
+    data = malloc(size);
+    r = read(conn->sock, data, size);
+    if (r != size)
+        return 0;
+
+    return data;
+}
+
+int client_send(struct connection *conn) {
+    return -1;
+}
+
 int create_server(struct connection *server) {
     
     int sock;
@@ -208,6 +301,8 @@ int create_server(struct connection *server) {
     strncpy(server->name, "server", sizeof(server->name));
     server->sock = sock;
     memcpy(&server->server_addr, &server_addr, sizeof(server_addr));
+
+    server->is_server = 1;
 
     if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
         return -1;
@@ -254,40 +349,6 @@ int close_connection(struct connection **p_conn) {
         filter_cleanup(conn);
 
     *p_conn = NULL;
-
-    return 0;
-}
-
-int create_filter(struct connection *conn,
-                  const char *filter_ip, const char *filter_desc) {
-
-    struct filter *filt, *prev;
-    struct sockaddr_in filter_addr;
-
-    if (conn == NULL || filter_ip == NULL || filter_desc == NULL)
-        return -1;
-
-    memset(&filter_addr, 0, sizeof(filter_addr));
-    if (inet_pton(AF_INET, filter_ip, &(filter_addr.sin_addr)) != 1)
-        return -1;
-
-    if ((filt = calloc(sizeof(*filt), 1)) == NULL)
-        return -1;
-
-    if (conn->filters_head) {
-        prev = filter_get_last(conn->filters_head);
-        filt->prev = prev;
-        prev->next = filt;
-        filter_ref_inc(filt);
-        filter_ref_inc(prev);
-    }
-    else {
-        conn->filters_head = filt;
-        filter_ref_inc(filt);
-    }
-
-    memcpy(&filt->addr, &filter_addr, sizeof(filt->addr));
-    strncpy(filt->desc, filter_desc, sizeof(filt->desc));
 
     return 0;
 }
@@ -347,10 +408,19 @@ int main(int argc, const char *argv[], const char *envp[]) {
 }
 
 #else
+
+void replace_newline(char *buf) {
+    char *p;
+    for (p = buf ; *p != '\0' ; *p++) {
+        if (*p == '\n')
+            *p = '\0';
+    }
+}
+
 int service_handler(void) {
 
     int cmd, idx, idx2;
-    char buf[16];
+    char buf[256], buf2[256];
 
     struct connection *conn[32];
 
@@ -365,46 +435,104 @@ int service_handler(void) {
         switch (cmd) {
 
             case SVC_CREATE_SERVER & 0xffff:
+
                 printf("idx> ");
                 fgets(buf, 16, stdin);
                 idx = atoi(buf);
                 conn[idx] = malloc(sizeof(struct connection));
+
                 if (create_server(conn[idx])) {
                     fprintf(stderr, "server creation failed.\n");
                     free(conn[idx]);
                     conn[idx] = NULL;
                 }
+
                 break;
 
             case SVC_CREATE_CLIENT & 0xffff:
+
                 printf("idx> ");
                 fgets(buf, 16, stdin);
                 idx = atoi(buf);
+
                 printf("idx2> ");
                 fgets(buf, 16, stdin);
                 idx2 = atoi(buf);
                 conn[idx2] = malloc(sizeof(struct connection));
+
                 if (create_client(conn[idx], conn[idx2])) {
                     fprintf(stderr, "client creation failed.\n");
                     free(conn[idx2]);
                     conn[idx2] = NULL;
                 }
+
                 break;
 
             case SVC_CLOSE & 0xffff:
+
                 printf("idx> ");
                 fgets(buf, 16, stdin);
                 idx = atoi(buf);
+
                 if (close_connection(&conn[idx]))
                     fprintf(stderr, "closing failed.\n");
+
                 break;
 
             case SVC_CREATE_FILTER & 0xffff:
+
                 printf("idx> ");
                 fgets(buf, 16, stdin);
                 idx = atoi(buf);
+
                 if (create_filter(conn[idx], "192.168.0.1", "Hello, World!"))
                     fprintf(stderr, "filter creation failed.\n");
+
+                break;
+
+            case SVC_FILTER_EDIT_DESC & 0xffff:
+
+                printf("idx> ");
+                fgets(buf, 16, stdin);
+                idx = atoi(buf);
+
+                printf("ip> ");
+                fgets(buf, 256, stdin);
+                replace_newline(buf);
+
+                printf("desc> ");
+                fgets(buf2, 256, stdin);
+
+                if (filter_edit_desc(conn[idx], buf, buf2))
+                    fprintf(stderr, "filter edit failed.\n");
+
+                break;
+
+            case SVC_FILTER_DUMP_DESC & 0xffff:
+
+                printf("idx> ");
+                fgets(buf, 16, stdin);
+                idx = atoi(buf);
+
+                printf("ip> ");
+                fgets(buf ,256, stdin);
+                replace_newline(buf);
+
+                if (filter_dump_desc(conn[idx], buf, buf2))
+                    fprintf(stderr, "filter dump failed.\n");
+
+                puts(buf2);
+
+                break;
+
+            case SVC_CLIENT_RECV & 0xffff:
+                break;
+
+            case SVC_CLIENT_SEND & 0xffff:
+                break;
+
+            case 1234:
+                dump_filter(conn[0]);
                 break;
 
             default:
