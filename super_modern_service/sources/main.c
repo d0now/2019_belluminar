@@ -24,6 +24,10 @@
 
 #define CLIENT_COUNT 16
 
+#define SVC_CREATE_SERVER   0x13370000
+#define SVC_CREATE_CLIENT   0x13370001
+#define SVC_CLOSE           0x13370002
+
 uint16_t svcid[] = {
     's', 'u', 'p', 'e', 'r', '_', 
     'm', 'o', 'd', 'e', 'r', 'n', '_', 
@@ -80,9 +84,13 @@ int filter_cleanup(struct filter *filt) {
     if (filt == NULL)
         return -1;
 
-    for (now = filt->next ; now->next != NULL ; now = now->next)
-        free(now->prev);
-    free(now);
+    if (filt->next) {
+        for (now = filt->next ; now->next != NULL ; now = now->next)
+            free(now->prev);
+        free(now);
+    }
+    else
+        free(filt);
 
     return 0;
 }
@@ -127,8 +135,10 @@ int create_client(struct connection *server, struct connection *client) {
         return -1;
 
     sock = accept(server->sock, (struct sockaddr *)&client_addr, &len);
-    if (sock < 0)
+    if (sock < 0) {
+        fprintf(stderr, "error: accept\n");
         return -1;
+    }
 
     memcpy(client, server, sizeof(*client));
     strncpy(client->name, "client", sizeof(client->name));
@@ -154,12 +164,25 @@ int create_client(struct connection *server, struct connection *client) {
     return 0;
 }
 
-int close_connection(struct connection *) {
-    close(connection->sock);
-    if (connection->filters_head)
-        filter_cleanup(filters_head);
+int close_connection(struct connection **p_conn) {
+
+    struct connection *conn;
+
+    if (p_conn == NULL || *p_conn == NULL)
+        return -1;
+
+    conn = *p_conn;
+
+    close(conn->sock);
+    if (conn->filters_head)
+        filter_cleanup(conn->filters_head);
+
+    *p_conn = NULL;
+
+    return 0;
 }
 
+#ifdef IO_BINDER
 int service_handler(struct binder_state *bs,
                     struct binder_transaction_data *txn,
                     struct binder_io *msg,
@@ -212,3 +235,63 @@ int main(int argc, const char *argv[], const char *envp[]) {
     binder_loop(bs, service_handler);
     return 0;
 }
+#else
+int service_handler(void) {
+
+    int cmd, idx, idx2;
+    char buf[16];
+
+    struct connection *conn[32];
+
+    memset(conn, 0, sizeof(struct connection));
+
+    while (1) {
+
+        printf("> ");
+        fgets(buf, 16, stdin);
+        cmd = atoi(buf);
+
+        switch (cmd) {
+
+            case SVC_CREATE_SERVER & 0xffff:
+                printf("idx> ");
+                fgets(buf, 16, stdin);
+                idx = atoi(buf);
+                conn[idx] = malloc(sizeof(struct connection));
+                if (create_server(conn[idx]))
+                    fprintf(stderr, "server creation failed.\n");
+                break;
+
+            case SVC_CREATE_CLIENT & 0xffff:
+                printf("idx> ");
+                fgets(buf, 16, stdin);
+                idx = atoi(buf);
+                printf("idx2> ");
+                fgets(buf, 16, stdin);
+                idx2 = atoi(buf);
+                conn[idx2] = malloc(sizeof(struct connection));
+                if (create_client(conn[idx], conn[idx2]))
+                    fprintf(stderr, "client creation failed.\n");
+                break;
+
+            case SVC_CLOSE & 0xffff:
+                printf("idx> ");
+                fgets(buf, 16, stdin);
+                idx = atoi(buf);
+                if (close_connection(&conn[idx]))
+                    fprintf(stderr, "closing failed.\n");
+                break;
+
+            default:
+                printf("Bye...\n");
+                return 0;
+        }
+
+        printf("Done\n");
+    }
+}
+
+int main(int argc, const char *argv[], const char *envp[]) {
+    service_handler();
+}
+#endif
