@@ -13,6 +13,7 @@
 
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include "binder.h"
 
@@ -27,6 +28,7 @@
 #define SVC_CREATE_SERVER   0x13370000
 #define SVC_CREATE_CLIENT   0x13370001
 #define SVC_CLOSE           0x13370002
+#define SVC_CREATE_FILTER   0x13370003
 
 uint16_t svcid[] = {
     's', 'u', 'p', 'e', 'r', '_', 
@@ -47,7 +49,42 @@ struct filter {
     struct filter *prev;
     struct sockaddr_in addr;
     char desc[64];
+    int refcount;
 };
+
+void filter_dump(struct filter *filt) {
+
+    struct filter *now;
+
+    for (now = filt ; now->next != NULL ; now = now->next) {
+        printf("========================\n");
+        printf("[%p, %p, %p]\n", now->prev, now, now->next);
+        printf("refcount=%d\n", now->refcount);
+    }
+        printf("========================\n");
+        printf("[%p, %p, %p]\n", now->prev, now, now->next);
+        printf("refcount=%d\n", now->refcount);
+    printf("========================\n");
+}
+
+int filter_free(struct filter *filt) {
+    if (filt->refcount == 0)
+        free(filt);
+    else {
+        fprintf(stderr, "Fatal: Detected double free\n");
+        exit(0);
+    }
+}
+
+int filter_ref_inc(struct filter *filt) {
+    return filt->refcount++;
+}
+
+int filter_ref_dec(struct filter *filt) {
+    if (filt->refcount)
+        filt->refcount--;
+    return filt->refcount;
+}
 
 struct filter *filter_get_last(struct filter *filt) {
 
@@ -77,20 +114,76 @@ struct filter *filter_get_head(struct filter *filt) {
     return 0;
 }
 
-int filter_cleanup(struct filter *filt) {
+int filter_deletion(struct connection *conn, struct filter *filt) {
 
-    struct filter *now;
+    struct filter *now, *next, *prev;
+
+    if (filt == NULL)
+        return -1;
+
+    now  = filt;
+    next = filt->next;
+    prev = filt->prev;
+
+    if (next && prev) {
+        next->prev = prev;
+        prev->next = next;
+        filter_ref_dec(now);
+        filter_ref_dec(now);
+    }
+    else if (next == NULL && prev) {
+        prev->next = next;
+        filter_ref_dec(now);
+    }
+    else if (next && prev == NULL) {
+        conn->filters_head = next;
+        next->prev = NULL;
+        filter_ref_dec(now);
+        filter_ref_dec(now);
+    }
+    else {
+        conn->filters_head = NULL;
+        filter_ref_dec(now);
+    }
+
+    filter_free(now);
+
+    return 0;
+}
+
+int filter_cleanup(struct connection *conn) {
+
+    struct filter *filt, *now, *next;
+
+    if (conn == NULL)
+        return -1;
+
+    filt = conn->filters_head;
 
     if (filt == NULL)
         return -1;
 
     if (filt->next) {
-        for (now = filt->next ; now->next != NULL ; now = now->next)
-            free(now->prev);
-        free(now);
+        filt = filter_get_last(filt);
+        for (now = filt->prev ; now->prev != NULL ; now = now->prev) {
+            next = now->next;
+            next->prev = NULL;
+            filter_ref_dec(now);
+            now->next = NULL;
+            filter_ref_dec(next);
+            filter_free(next);
+        }
+        next = now->next;
+        next->prev = NULL;
+        filter_ref_dec(now);
+        now->next = NULL;
+        filter_ref_dec(next);
+        filter_free(next);
     }
-    else
-        free(filt);
+    filt = conn->filters_head;
+    conn->filters_head = NULL;
+    filter_ref_dec(filt);
+    filter_free(filt);
 
     return 0;
 }
@@ -129,7 +222,6 @@ int create_client(struct connection *server, struct connection *client) {
 
     int sock, len;
     struct sockaddr_in client_addr;
-    struct filter *filt, *prev;
 
     if (server == NULL || client == NULL)
         return -1;
@@ -145,22 +237,6 @@ int create_client(struct connection *server, struct connection *client) {
     client->sock = sock;
     memcpy(&client->client_addr, &client_addr, sizeof(client_addr));
 
-    /*
-    if ((filt = malloc(sizeof(filt))) == NULL)
-        return -1;
-
-    if (server->filters_head) {
-        prev = filter_get_last(server->filters_head);
-        prev->next = filt;
-        filt->prev = prev;
-    }
-    else
-        server->filters_head = filt;
-
-    memcpy(&filt->addr, &client_addr, sizeof(client_addr));
-    strncpy(filt->desc, "Description", sizeof(filt->desc));
-    */
-
     return 0;
 }
 
@@ -175,9 +251,43 @@ int close_connection(struct connection **p_conn) {
 
     close(conn->sock);
     if (conn->filters_head)
-        filter_cleanup(conn->filters_head);
+        filter_cleanup(conn);
 
     *p_conn = NULL;
+
+    return 0;
+}
+
+int create_filter(struct connection *conn,
+                  const char *filter_ip, const char *filter_desc) {
+
+    struct filter *filt, *prev;
+    struct sockaddr_in filter_addr;
+
+    if (conn == NULL || filter_ip == NULL || filter_desc == NULL)
+        return -1;
+
+    memset(&filter_addr, 0, sizeof(filter_addr));
+    if (inet_pton(AF_INET, filter_ip, &(filter_addr.sin_addr)) != 1)
+        return -1;
+
+    if ((filt = calloc(sizeof(*filt), 1)) == NULL)
+        return -1;
+
+    if (conn->filters_head) {
+        prev = filter_get_last(conn->filters_head);
+        filt->prev = prev;
+        prev->next = filt;
+        filter_ref_inc(filt);
+        filter_ref_inc(prev);
+    }
+    else {
+        conn->filters_head = filt;
+        filter_ref_inc(filt);
+    }
+
+    memcpy(&filt->addr, &filter_addr, sizeof(filt->addr));
+    strncpy(filt->desc, filter_desc, sizeof(filt->desc));
 
     return 0;
 }
@@ -235,6 +345,7 @@ int main(int argc, const char *argv[], const char *envp[]) {
     binder_loop(bs, service_handler);
     return 0;
 }
+
 #else
 int service_handler(void) {
 
@@ -258,8 +369,11 @@ int service_handler(void) {
                 fgets(buf, 16, stdin);
                 idx = atoi(buf);
                 conn[idx] = malloc(sizeof(struct connection));
-                if (create_server(conn[idx]))
+                if (create_server(conn[idx])) {
                     fprintf(stderr, "server creation failed.\n");
+                    free(conn[idx]);
+                    conn[idx] = NULL;
+                }
                 break;
 
             case SVC_CREATE_CLIENT & 0xffff:
@@ -270,8 +384,11 @@ int service_handler(void) {
                 fgets(buf, 16, stdin);
                 idx2 = atoi(buf);
                 conn[idx2] = malloc(sizeof(struct connection));
-                if (create_client(conn[idx], conn[idx2]))
+                if (create_client(conn[idx], conn[idx2])) {
                     fprintf(stderr, "client creation failed.\n");
+                    free(conn[idx2]);
+                    conn[idx2] = NULL;
+                }
                 break;
 
             case SVC_CLOSE & 0xffff:
@@ -280,6 +397,14 @@ int service_handler(void) {
                 idx = atoi(buf);
                 if (close_connection(&conn[idx]))
                     fprintf(stderr, "closing failed.\n");
+                break;
+
+            case SVC_CREATE_FILTER & 0xffff:
+                printf("idx> ");
+                fgets(buf, 16, stdin);
+                idx = atoi(buf);
+                if (create_filter(conn[idx], "192.168.0.1", "Hello, World!"))
+                    fprintf(stderr, "filter creation failed.\n");
                 break;
 
             default:
@@ -294,4 +419,5 @@ int service_handler(void) {
 int main(int argc, const char *argv[], const char *envp[]) {
     service_handler();
 }
+
 #endif
