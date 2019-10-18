@@ -35,40 +35,54 @@ struct connection {
     int sock;
     struct sockaddr_in server_addr;
     struct sockaddr_in client_addr;
-    struct session *sessions_head;
+    struct filter *filters_head;
 };
 
-struct session {
-    struct session *next;
-    struct session *prev;
+struct filter {
+    struct filter *next;
+    struct filter *prev;
     struct sockaddr_in addr;
     char desc[64];
 };
 
-struct session *session_get_last(struct session *sess) {
+struct filter *filter_get_last(struct filter *filt) {
 
-    struct session *now;
+    struct filter *now;
 
-    if (sess == NULL)
+    if (filt == NULL)
         return 0;
 
-    for (now = sess ; now->next != NULL ; now = now->next);
+    for (now = filt ; now->next != NULL ; now = now->next);
     if (now && now->next == NULL)
         return now;
 
     return 0;
 }
 
-struct session *session_get_head(struct session *sess) {
+struct filter *filter_get_head(struct filter *filt) {
 
-    struct session *now;
+    struct filter *now;
 
-    if (sess == NULL)
+    if (filt == NULL)
         return 0;
 
-    for (now = sess ; now->prev != NULL ; now = now->prev);
+    for (now = filt ; now->prev != NULL ; now = now->prev);
     if (now && now->next == NULL)
         return now;
+
+    return 0;
+}
+
+int filter_cleanup(struct filter *filt) {
+
+    struct filter *now;
+
+    if (filt == NULL)
+        return -1;
+
+    for (now = filt->next ; now->next != NULL ; now = now->next)
+        free(now->prev);
+    free(now);
 
     return 0;
 }
@@ -107,7 +121,7 @@ int create_client(struct connection *server, struct connection *client) {
 
     int sock, len;
     struct sockaddr_in client_addr;
-    struct session *sess, *prev;
+    struct filter *filt, *prev;
 
     if (server == NULL || client == NULL)
         return -1;
@@ -121,24 +135,30 @@ int create_client(struct connection *server, struct connection *client) {
     client->sock = sock;
     memcpy(&client->client_addr, &client_addr, sizeof(client_addr));
 
-    if ((sess = malloc(sizeof(sess))) == NULL)
+    /*
+    if ((filt = malloc(sizeof(filt))) == NULL)
         return -1;
 
-    if (server->sessions_head) {
-        prev = session_get_last(server->sessions_head);
-        prev->next = sess;
-        sess->prev = prev;
+    if (server->filters_head) {
+        prev = filter_get_last(server->filters_head);
+        prev->next = filt;
+        filt->prev = prev;
     }
     else
-        server->sessions_head = sess;
+        server->filters_head = filt;
 
-    memcpy(&sess->addr, &client_addr, sizeof(client_addr));
-    strncpy(sess->desc, "Description", sizeof(sess->desc));
+    memcpy(&filt->addr, &client_addr, sizeof(client_addr));
+    strncpy(filt->desc, "Description", sizeof(filt->desc));
+    */
 
     return 0;
 }
 
-//int session
+int close_connection(struct connection *) {
+    close(connection->sock);
+    if (connection->filters_head)
+        filter_cleanup(filters_head);
+}
 
 int service_handler(struct binder_state *bs,
                     struct binder_transaction_data *txn,

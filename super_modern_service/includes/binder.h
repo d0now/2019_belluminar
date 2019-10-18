@@ -1,4 +1,6 @@
-/* Copyright 2008 The Android Open Source Project
+/*
+ * Copyright 2008 The Android Open Source Project
+ * Some edited by @d0now
  */
 
 #ifndef _BINDER_H_
