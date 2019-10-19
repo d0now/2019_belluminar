@@ -4,43 +4,79 @@
  * git : github.com/d0now/2019_belluminar
 */
 
-#include <errno.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <string.h>
-#include <sys/types.h>
-
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-
 #include "main.h"
+#include "logger.h"
 #include "binder.h"
 
-void dump_filter(struct connection *conn) {
-    struct filter *filt, *now;
+char *string(size_t len) {
 
-    filt = conn->filters_head;
-    for (now = filt ; now->next != NULL ; now = now->next) {
-        puts("==============================");
-        printf("struct now(%p) {\n", now);
-        printf("\tnext=%p;\n", now->next);
-        printf("\tprev=%p;\n", now->prev);
-        printf("\taddr=%x;\n", now->addr.sin_addr.s_addr);
-        printf("\tdesc=%x;\n", *(unsigned int*)now->desc);
-        printf("\trefcount=%x;\n", now->refcount);
-        puts("};");
-    }
-    puts("==============================");
-    printf("struct now(%p) {\n", now);
-    printf("\tnext=%p;\n", now->next);
-    printf("\tprev=%p;\n", now->prev);
-    printf("\taddr=%x;\n", now->addr.sin_addr.s_addr);
-    printf("\tdesc=%x;\n", *(unsigned int*)now->desc);
-    printf("\trefcount=%x;\n", now->refcount);
-    puts("};");
-    puts("==============================");
+    char *ret;
+
+    LOG_VA("string(%lx) = ", len);
+    ret = calloc(len, 1);
+    LOG_VA("%p;\n", ret);
+
+    return ret;
+}
+
+uint16_t *string16(size_t len) {
+
+    uint16_t *ret;
+
+    LOG_VA("string16(%lx) = ", len);
+    ret = calloc(len, 2);
+    LOG_VA("%p;\n", ret);
+
+    return ret;
+}
+
+int string_free(void *ptr) {
+
+    LOG_VA("string_free(%p);\n", ptr);
+    if (ptr)
+        free(ptr);
+}
+
+char *string16_to_string(const uint16_t *string16, size_t len) {
+
+    char *ret = NULL;
+    int i;
+
+    LOG_VA("string16_to_string(%p, %lx) = ", string16, len);
+
+    if (string16 == NULL)
+        goto done;
+
+    if ((ret = string(len)) == NULL)
+        goto done;
+
+    for (i=0 ; i<len ; i++)
+        ret[i] = (char)string16[i];
+
+done:
+    LOG_VA("%p;\n", ret);
+    return ret;
+}
+
+uint16_t *string_to_string16(const char *string, size_t len) {
+
+    uint16_t *ret = NULL;
+    int i;
+
+    LOG_VA("string_to_string16(%p, %lx) = ", string16, len);
+
+    if (string == NULL)
+        goto done;
+
+    if ((ret = string16(len)) == NULL)
+        goto done;
+
+    for (i=0 ; i<len ; i++)
+        ret[i] = (uint16_t)string[i];
+
+done:
+    LOG_VA("%p;\n", ret);
+    return ret;
 }
 
 int create_filter(struct connection *conn,
@@ -48,6 +84,8 @@ int create_filter(struct connection *conn,
 
     struct filter *filt, *prev;
     struct sockaddr_in filter_addr;
+
+    LOG_VA("create_filter(%p, \"%s\", \"%s\");\n", conn, filter_ip, filter_desc);
 
     if (conn == NULL || filter_ip == NULL || filter_desc == NULL)
         return -1;
@@ -80,6 +118,8 @@ int create_filter(struct connection *conn,
 int filter_deletion(struct connection *conn, struct filter *filt) {
 
     struct filter *now, *next, *prev;
+
+    LOG_VA("filter_deletion(%p, %p);\n", conn, filt);
 
     if (filt == NULL)
         return -1;
@@ -118,6 +158,8 @@ int filter_cleanup(struct connection *conn) {
 
     struct filter *filt, *now, *next;
 
+    LOG_VA("filter_cleanup(%p);\n", conn);
+
     if (conn == NULL)
         return -1;
 
@@ -152,12 +194,17 @@ int filter_cleanup(struct connection *conn) {
 }
 
 int filter_free(struct filter *filt) {
+
+    LOG_VA("filter_free(%p);\n", filt);
+
     if (filt->refcount == 0)
         free(filt);
     else {
-        fprintf(stderr, "Fatal: Detected double free\n");
+        logger_write("Fatal: Detected double free\n");
         exit(0);
     }
+
+    return 0;
 }
 
 int filter_ref_inc(struct filter *filt) {
@@ -172,44 +219,57 @@ int filter_ref_dec(struct filter *filt) {
 
 struct filter *filter_get_last(struct filter *filt) {
 
+    struct filter *ret = NULL;
     struct filter *now;
 
+    LOG_VA("filter_get_last(%p) = ", filt);
+
     if (filt == NULL)
-        return 0;
+        goto done;
 
     for (now = filt ; now->next != NULL ; now = now->next);
     if (now && now->next == NULL)
-        return now;
+        ret = now;
 
-    return 0;
+done:
+    LOG_VA("%p;\n", ret);
+    return ret;
 }
 
 struct filter *filter_get_head(struct filter *filt) {
 
+    struct filter *ret = NULL;
     struct filter *now;
 
+    LOG_VA("filter_get_head(%p) = ", filt);
+
     if (filt == NULL)
-        return 0;
+        goto done;
 
     for (now = filt ; now->prev != NULL ; now = now->prev);
     if (now && now->next == NULL)
-        return now;
+        ret = now;
 
-    return 0;
+done:
+    LOG_VA("%p;\n", ret);
+    return ret;
 }
 
 struct filter *filter_find(struct connection *conn, const char *filter_ip) {
 
+    struct filter *ret = NULL;
     struct filter *now;
     struct sockaddr_in filter_addr;
     int found;
 
+    LOG_VA("filter_find(%p, \"%s\") = ", conn, filter_ip);
+
     if (conn == NULL || filter_ip == NULL)
-        return 0;
+        goto done;
 
     memset(&filter_addr, 0, sizeof(filter_addr));
     if (inet_pton(AF_INET, filter_ip, &(filter_addr.sin_addr)) != 1)
-        return 0;
+        goto done;
 
     for (now = conn->filters_head ; now->next != NULL ; now = now->next) {
         if (now->addr.sin_addr.s_addr == filter_addr.sin_addr.s_addr) {
@@ -221,13 +281,18 @@ struct filter *filter_find(struct connection *conn, const char *filter_ip) {
         found = 1;
 
     if (found)
-        return now;
-    return 0;
+        ret = now;
+
+done:
+    LOG_VA("%p;\n", now);
+    return ret;
 }
 
 int filter_edit_desc(struct connection *conn, const char *filter_ip, const char *filter_desc) {
 
     struct filter *filt;
+
+    LOG_VA("filter_edit_desc(%p, \"%s\", \"%10s\");\n", conn, filter_ip, filter_desc);
 
     if (conn == NULL || filter_ip == NULL || filter_desc == NULL)
         return -1;
@@ -243,6 +308,8 @@ int filter_dump_desc(struct connection *conn, const char *filter_ip, char *filte
 
     struct filter *filt;
 
+    LOG_VA("filter_dump_desc(%p, \"%s\", %p);\n", conn, filter_ip, filter_desc);
+
     if (conn == NULL || filter_ip == NULL || filter_desc == NULL)
         return -1;
 
@@ -253,38 +320,63 @@ int filter_dump_desc(struct connection *conn, const char *filter_ip, char *filte
     return 0;
 }
 
-void *client_recv(struct connection *conn) {
+int client_recv(struct connection *conn, void *data, size_t *size) {
 
     int r;
-    size_t size;
-    void *data;
+
+    LOG_VA("client_recv(%p, %p, %p);\n", conn, data, size);
 
     if (conn == NULL || conn->is_server)
-        return 0;
+        return -1;
 
-    r = read(conn->sock, &size, sizeof(size));
-    if (r != sizeof(size))
-        return 0;
+    if (data == NULL || size == NULL)
+        return -1;
+
+    r = read(conn->sock, size, sizeof(*size));
+    if (r != sizeof(*size)) {
+        *size = 0;
+        return -1;
+    }
+
+    if (*size < 0 && *size > 0x1000)
+        *size = 0x1000;
+
+    r = read(conn->sock, data, *size);
+    if (r != *size)
+        return -1;
+
+    return 0;
+}
+
+int client_send(struct connection *conn, void *data, size_t size) {
+
+    int r;
+
+    LOG_VA("client_send(%p, %p, %lx);\n", conn, data, size);
+    
+    if (conn == NULL || data == NULL)
+        return -1;
 
     if (size < 0 && size > 0x1000)
         size = 0x1000;
 
-    data = malloc(size);
-    r = read(conn->sock, data, size);
+    r = write(conn->sock, &size, sizeof(size));
+    if (r != sizeof(size))
+        return -1;
+
+    r = write(conn->sock, data, size);
     if (r != size)
-        return 0;
+        return -1;
 
-    return data;
-}
-
-int client_send(struct connection *conn) {
-    return -1;
+    return 0;
 }
 
 int create_server(struct connection *server) {
     
     int sock;
     struct sockaddr_in server_addr;
+
+    LOG_VA("create_server(%p);\n", server);
 
     if (server == NULL)
         return -1;
@@ -318,12 +410,14 @@ int create_client(struct connection *server, struct connection *client) {
     int sock, len;
     struct sockaddr_in client_addr;
 
+    LOG_VA("create_client(%p, %p);\n", server, client);
+
     if (server == NULL || client == NULL)
         return -1;
 
     sock = accept(server->sock, (struct sockaddr *)&client_addr, &len);
     if (sock < 0) {
-        fprintf(stderr, "error: accept\n");
+        logger_write("error: accept\n");
         return -1;
     }
 
@@ -339,6 +433,8 @@ int close_connection(struct connection **p_conn) {
 
     struct connection *conn;
 
+    LOG_VA("close_connection(%p);\n", p_conn);
+
     if (p_conn == NULL || *p_conn == NULL)
         return -1;
 
@@ -353,15 +449,19 @@ int close_connection(struct connection **p_conn) {
     return 0;
 }
 
-#ifdef IO_BINDER
 int service_handler(struct binder_state *bs,
                     struct binder_transaction_data *txn,
                     struct binder_io *msg,
                     struct binder_io *reply) {
 
     uint32_t strict_policy;
-    uint16_t *s;
-    size_t len;
+    uint16_t *s, *s1, *s2;
+    char *str1, *str2;
+    size_t len1, len2;
+    void *data, *bio_data;
+
+    struct connection *conn[CONNECTION_COUNT];
+    uint32_t idx1, idx2;
 
     if (txn->target.ptr != BINDER_SERVICE_SMS)
         return -1;
@@ -370,182 +470,282 @@ int service_handler(struct binder_state *bs,
         return 0;
 
     strict_policy = bio_get_uint32(msg);
-    s = bio_get_string16(msg, &len);
+    s = bio_get_string16(msg, &len1);
     if (s == NULL)
         return -1;
 
-    if ((len != (sizeof(svcid) / 2)) ||
-        memcmp(svcid, s, sizeof(svcid))) {
+    if ((len1 != (sizeof(svc_sms_id) / 2)) ||
+        memcmp(svc_sms_id, s, sizeof(svc_sms_id))) {
         return -1;
     }
 
+    logger_write("cmd executing...\n");
     switch (txn->code) {
+
+        case SVC_CREATE_SERVER:
+
+            idx1 = bio_get_uint32(msg);
+            if (idx1 < 0 || idx1 > CONNECTION_COUNT) {
+                logger_write("indexing failed.\n");
+                goto err;
+            }
+
+            conn[idx1] = malloc(sizeof(struct connection));
+            if (conn[idx1] == NULL) {
+                logger_write("malloc failed.\n");
+                goto err;
+            }
+
+            if (create_server(conn[idx1])) {
+                logger_write("server creation failed.\n");
+                free(conn[idx1]);
+                conn[idx1] = NULL;
+                goto err;
+            }
+
+            logger_write("server created.\n");
+            break;
+
+        case SVC_CREATE_CLIENT:
+
+            idx1 = bio_get_uint32(msg);
+            idx2 = bio_get_uint32(msg);
+            if ((idx1 < 0 || idx1 >= CONNECTION_COUNT) ||
+                (idx2 < 0 || idx2 >= CONNECTION_COUNT)) {
+                logger_write("indexing failed.\n");
+                goto err;
+            }
+
+            if (conn[idx1] == NULL) {
+                logger_write("server not exist.\n");
+                goto err;
+            }
+
+            conn[idx2] = malloc(sizeof(struct connection));
+            if (conn[idx2] == NULL) {
+                logger_write("malloc failed.\n");
+                goto err;
+            }
+
+            if (create_client(conn[idx1], conn[idx2])) {
+                logger_write("server creation failed.\n");
+                free(conn[idx2]);
+                conn[idx2] = NULL;
+                goto err;
+            }
+
+            logger_write("client created.\n");
+            break;
+
+        case SVC_CLOSE:
+
+            idx1 = bio_get_uint32(msg);
+            if (idx1 < 0 || idx1 >= CONNECTION_COUNT) {
+                logger_write("indexing failed.\n");
+                goto err;
+            }
+
+            if (conn[idx1] == NULL) {
+                logger_write("connection not exist.\n");
+                goto err;
+            }
+
+            if (close_connection(&conn[idx1])) {
+                logger_write("closing failed.\n");
+                goto err;
+            }
+
+            logger_write("connection closed.\n");
+            break;
+
+        case SVC_CREATE_FILTER:
+
+            idx1 = bio_get_uint32(msg);
+            s1 = bio_get_string16(msg, &len1);
+            s2 = bio_get_string16(msg, &len2);
+            if (idx1 < 0 || idx1 >= CONNECTION_COUNT || s1 == NULL || s2 == NULL) {
+                logger_write("indexing failed.\n");
+                goto err;
+            }
+
+            if (conn[idx1] == NULL) {
+                logger_write("connection not exist.\n");
+                goto err;
+            }
+
+            str1 = string16_to_string(s1, len1);
+            str2 = string16_to_string(s2, len2);
+            if (str1 == NULL || str2 == NULL) {
+                logger_write("conversion failed.\n");
+                goto err;
+            }
+
+            if (create_filter(conn[idx1], str1, str2)) {
+                logger_write("filter creation failed.\n");
+                goto err;
+            }
+
+            logger_write("filter created.\n");
+            break;
+
+        case SVC_FILTER_EDIT_DESC:
+
+            idx1 = bio_get_uint32(msg);
+            s1 = bio_get_string16(msg, &len1);
+            s2 = bio_get_string16(msg, &len2);
+            if (idx1 < 0 || idx1 >= CONNECTION_COUNT || s1 == NULL || s2 == NULL) {
+                logger_write("indexing failed.\n");
+                goto err;
+            }
+
+            if (conn[idx1] == NULL) {
+                logger_write("connection not exist.\n");
+                goto err;
+            }
+
+            str1 = string16_to_string(s1, len1);
+            str2 = string16_to_string(s2, len2);
+            if (str1 == NULL || str2 == NULL) {
+                logger_write("conversion failed.\n");
+                goto err;
+            }
+
+            if (filter_edit_desc(conn[idx1], str1, str2)) {
+                logger_write("editing failed.\n");
+                goto err;
+            }
+
+            logger_write("filter edited.\n");
+            break;
+
+        case SVC_FILTER_DUMP_DESC:
+
+            idx1 = bio_get_uint32(msg);
+            s1 = bio_get_string16(msg, &len1);
+            if (idx1 < 0 || idx1 >= CONNECTION_COUNT || s1 == NULL) {
+                logger_write("indexing failed.\n");
+                goto err;
+            }
+
+            if (conn[idx1] == NULL) {
+                logger_write("connection not exist.\n");
+                goto err;
+            }
+
+            str1 = string16_to_string(s1, len1);
+            str2 = string(sizeof(((struct filter *)0)->desc));
+            if (str1 == NULL || str2 == NULL) {
+                logger_write("conversion failed.\n");
+                string_free(str1);
+                string_free(str2);
+                goto err;
+            }
+
+            if (filter_dump_desc(conn[idx1], str1, str2)) {
+                logger_write("dump failed.\n");
+                string_free(str1);
+                string_free(str2);
+                goto err;
+            }
+
+            bio_put_uint32(reply, 0);
+            bio_put_string16_x(reply, str2);
+            string_free(str1);
+            string_free(str2);
+
+            logger_write("filter dumped.\n");
+            return 0;
+            break;
+
+        case SVC_CLIENT_RECV:
+
+            idx1 = bio_get_uint32(msg);
+            if (idx1 < 0 || idx1 >= CONNECTION_COUNT) {
+                logger_write("indexing failed.\n");
+                goto err;
+            }
+
+            if (conn[idx1] == NULL) {
+                logger_write("connection not exist.\n");
+                goto err;
+            }
+
+            if ((data = malloc(0x1000)) == NULL) {
+                logger_write("malloc failed.\n");
+                goto err;
+            }
+
+            if (client_recv(conn[idx1], data, &len1)) {
+                logger_write("recv failed.\n");
+                goto err;
+            }
+
+            bio_put_uint32(reply, 0);
+            bio_put_uint32(reply, len1);
+            if ((bio_data = bio_alloc(reply, len1)) == NULL) {
+                logger_write("bio_alloc failed.\n");
+                goto err;
+            }
+            memcpy(bio_data, data, len1);
+            free(data);
+            return 0;
+            break;
+
+        case SVC_CLIENT_SEND:
+
+            idx1 = bio_get_uint32(msg);
+            if (idx1 < 0 || idx1 >= CONNECTION_COUNT) {
+                logger_write("indexing failed.\n");
+                goto err;
+            }
+
+            if (conn[idx1] == NULL) {
+                logger_write("connection not exist.\n");
+                goto err;
+            }
+
+            len1 = bio_get_uint32(msg);
+            data = bio_get(msg, len1);
+            if (data == NULL || len1 == 0) {
+                logger_write("get binder buffer failed.\n");
+                goto err;
+            }
+
+            if (client_send(conn[idx1], data, len1)) {
+                logger_write("send failed.\n");
+                goto err;
+            }
+            break;
+
         default:
             return -1;
     }
 
     bio_put_uint32(reply, 0);
     return 0;
+err:
+    bio_put_uint32(reply, -1);
+    return -1;
 }
 
 int main(int argc, const char *argv[], const char *envp[]) {
 
     struct binder_state *bs;
 
+    logger_init("/tmp/log.txt");
+
     bs = binder_open("/dev/binder", 128*1024);
     if (bs == NULL) {
-        fprintf(stderr, "error: cannot open binder driver.\n");
+        logger_write("error: cannot open binder driver.\n");
         return -1;
     }
 
     if (binder_become_context_manager(bs)) {
-        fprintf(stderr, "error: binder_become_context_manager failed(%s).\n", strerror(errno));
+        logger_write("error: binder_become_context_manager failed.\n");
         return -1;
     }
 
+    logger_write("Looping...\n");
     binder_loop(bs, service_handler);
     return 0;
 }
-
-#else
-
-void replace_newline(char *buf) {
-    char *p;
-    for (p = buf ; *p != '\0' ; *p++) {
-        if (*p == '\n')
-            *p = '\0';
-    }
-}
-
-int service_handler(void) {
-
-    int cmd, idx, idx2;
-    char buf[256], buf2[256];
-
-    struct connection *conn[32];
-
-    memset(conn, 0, sizeof(struct connection));
-
-    while (1) {
-
-        printf("> ");
-        fgets(buf, 16, stdin);
-        cmd = atoi(buf);
-
-        switch (cmd) {
-
-            case SVC_CREATE_SERVER & 0xffff:
-
-                printf("idx> ");
-                fgets(buf, 16, stdin);
-                idx = atoi(buf);
-                conn[idx] = malloc(sizeof(struct connection));
-
-                if (create_server(conn[idx])) {
-                    fprintf(stderr, "server creation failed.\n");
-                    free(conn[idx]);
-                    conn[idx] = NULL;
-                }
-
-                break;
-
-            case SVC_CREATE_CLIENT & 0xffff:
-
-                printf("idx> ");
-                fgets(buf, 16, stdin);
-                idx = atoi(buf);
-
-                printf("idx2> ");
-                fgets(buf, 16, stdin);
-                idx2 = atoi(buf);
-                conn[idx2] = malloc(sizeof(struct connection));
-
-                if (create_client(conn[idx], conn[idx2])) {
-                    fprintf(stderr, "client creation failed.\n");
-                    free(conn[idx2]);
-                    conn[idx2] = NULL;
-                }
-
-                break;
-
-            case SVC_CLOSE & 0xffff:
-
-                printf("idx> ");
-                fgets(buf, 16, stdin);
-                idx = atoi(buf);
-
-                if (close_connection(&conn[idx]))
-                    fprintf(stderr, "closing failed.\n");
-
-                break;
-
-            case SVC_CREATE_FILTER & 0xffff:
-
-                printf("idx> ");
-                fgets(buf, 16, stdin);
-                idx = atoi(buf);
-
-                if (create_filter(conn[idx], "192.168.0.1", "Hello, World!"))
-                    fprintf(stderr, "filter creation failed.\n");
-
-                break;
-
-            case SVC_FILTER_EDIT_DESC & 0xffff:
-
-                printf("idx> ");
-                fgets(buf, 16, stdin);
-                idx = atoi(buf);
-
-                printf("ip> ");
-                fgets(buf, 256, stdin);
-                replace_newline(buf);
-
-                printf("desc> ");
-                fgets(buf2, 256, stdin);
-
-                if (filter_edit_desc(conn[idx], buf, buf2))
-                    fprintf(stderr, "filter edit failed.\n");
-
-                break;
-
-            case SVC_FILTER_DUMP_DESC & 0xffff:
-
-                printf("idx> ");
-                fgets(buf, 16, stdin);
-                idx = atoi(buf);
-
-                printf("ip> ");
-                fgets(buf ,256, stdin);
-                replace_newline(buf);
-
-                if (filter_dump_desc(conn[idx], buf, buf2))
-                    fprintf(stderr, "filter dump failed.\n");
-
-                puts(buf2);
-
-                break;
-
-            case SVC_CLIENT_RECV & 0xffff:
-                break;
-
-            case SVC_CLIENT_SEND & 0xffff:
-                break;
-
-            case 1234:
-                dump_filter(conn[0]);
-                break;
-
-            default:
-                printf("Bye...\n");
-                return 0;
-        }
-
-        printf("Done\n");
-    }
-}
-
-int main(int argc, const char *argv[], const char *envp[]) {
-    service_handler();
-}
-
-#endif
