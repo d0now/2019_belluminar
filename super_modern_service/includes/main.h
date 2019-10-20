@@ -21,6 +21,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <signal.h>
+
 #include "binder.h"
 
 #define BINDER_SERVICE_SMS 0
@@ -32,10 +34,11 @@
 #define SVC_CREATE_CLIENT       0x13370001
 #define SVC_CLOSE               0x13370002
 #define SVC_CREATE_FILTER       0x13370003
-#define SVC_FILTER_EDIT_DESC    0x13370004
-#define SVC_FILTER_DUMP_DESC    0x13370005
-#define SVC_CLIENT_RECV         0x13370006
-#define SVC_CLIENT_SEND         0x13370007
+#define SVC_DELETE_FILTER       0x13370004
+#define SVC_FILTER_EDIT_DESC    0x13370005
+#define SVC_FILTER_DUMP_DESC    0x13370006
+#define SVC_CLIENT_RECV         0x13370007
+#define SVC_CLIENT_SEND         0x13370008
 
 uint16_t svc_sms_id[] = {
     's', 'u', 'p', 'e', 'r', '_', 

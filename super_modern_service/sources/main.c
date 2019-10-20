@@ -79,6 +79,10 @@ done:
     return ret;
 }
 
+int fd_is_valid(int fd) {
+    return fcntl(fd, F_GETFD) != -1 || errno != EBADF;
+}
+
 int create_filter(struct connection *conn,
                   const char *filter_ip, const char *filter_desc) {
 
@@ -86,6 +90,7 @@ int create_filter(struct connection *conn,
     struct sockaddr_in filter_addr;
 
     LOG_VA("create_filter(%p, \"%s\", \"%s\");\n", conn, filter_ip, filter_desc);
+    LOG_VA("size=%lx\n", sizeof(struct filter));
 
     if (conn == NULL || filter_ip == NULL || filter_desc == NULL)
         return -1;
@@ -255,6 +260,31 @@ done:
     return ret;
 }
 
+int filter_check(struct connection *conn, struct sockaddr_in *addr) {
+
+    int found;
+    struct filter *now;
+
+    LOG_VA("filter_check(%p, %p);\n", conn, addr);
+
+    found = 0;
+
+    if (conn == NULL || addr == NULL)
+        goto done;
+
+    for (now = conn->filters_head ; now->next != NULL ; now = now->next) {
+        if (now->addr.sin_addr.s_addr == addr->sin_addr.s_addr) {
+            found = 1;
+            break;
+        }
+    }
+    if (now->addr.sin_addr.s_addr == addr->sin_addr.s_addr)
+        found = 1;
+
+done:
+    return found;
+}
+
 struct filter *filter_find(struct connection *conn, const char *filter_ip) {
 
     struct filter *ret = NULL;
@@ -288,6 +318,22 @@ done:
     return ret;
 }
 
+int filter_delete(struct connection *conn, const char *filter_ip) {
+
+    struct filter *filt;
+    struct sockaddr_in filter_addr;
+
+    LOG_VA("filter_delete(%p, \"%s\");", conn, filter_ip);
+
+    if (conn == NULL || filter_ip == NULL)
+        return -1;
+
+    if ((filt = filter_find(conn, filter_ip)) == NULL)
+        return -1;
+
+    return filter_deletion(conn, filt);
+}
+
 int filter_edit_desc(struct connection *conn, const char *filter_ip, const char *filter_desc) {
 
     struct filter *filt;
@@ -301,6 +347,7 @@ int filter_edit_desc(struct connection *conn, const char *filter_ip, const char 
         return -1;
 
     strncpy(filt->desc, filter_desc, sizeof(filt->desc));
+    LOG_VA("strlen(\"%s\")=%lx\n", filt->desc, strlen(filt->desc));
     return 0;
 }
 
@@ -332,6 +379,7 @@ int client_recv(struct connection *conn, void *data, size_t *size) {
     if (data == NULL || size == NULL)
         return -1;
 
+    LOG_VA("read(conn->sock, %p, %lx);\n", size, sizeof(*size));
     r = read(conn->sock, size, sizeof(*size));
     if (r != sizeof(*size)) {
         *size = 0;
@@ -341,9 +389,13 @@ int client_recv(struct connection *conn, void *data, size_t *size) {
     if (*size < 0 && *size > 0x1000)
         *size = 0x1000;
 
+    LOG_VA("size=%lx\n", *size);
+
     r = read(conn->sock, data, *size);
     if (r != *size)
         return -1;
+
+    LOG_VA("read(conn->sock, %p, %lx);\n", data, *size);
 
     return 0;
 }
@@ -378,11 +430,15 @@ int create_server(struct connection *server) {
 
     LOG_VA("create_server(%p);\n", server);
 
-    if (server == NULL)
+    if (server == NULL) {
+        LOG_VA("error: server is null.\n");
         return -1;
+    }
 
-    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) == -1)
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+        LOG_VA("error: can't create socket.\n");
         return -1;
+    }
 
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
@@ -396,11 +452,15 @@ int create_server(struct connection *server) {
 
     server->is_server = 1;
 
-    if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        LOG_VA("error: can't bind.\n");
         return -1;
+    }
 
-    if (listen(sock, 16) < 0)
+    if (listen(sock, 16) < 0) {
+        LOG_VA("error: can't listen.\n");
         return -1;
+    }
 
     return 0;
 }
@@ -421,10 +481,16 @@ int create_client(struct connection *server, struct connection *client) {
         return -1;
     }
 
+    if (filter_check(server, &client_addr)) {
+        logger_write("error: filterd.\n");
+        return -1;
+    }
+
     memcpy(client, server, sizeof(*client));
     strncpy(client->name, "client", sizeof(client->name));
-    client->sock = sock;
     memcpy(&client->client_addr, &client_addr, sizeof(client_addr));
+    client->sock = sock;
+    client->is_server = 0;
 
     return 0;
 }
@@ -449,6 +515,7 @@ int close_connection(struct connection **p_conn) {
     return 0;
 }
 
+struct connection *conn[CONNECTION_COUNT];
 int service_handler(struct binder_state *bs,
                     struct binder_transaction_data *txn,
                     struct binder_io *msg,
@@ -460,8 +527,9 @@ int service_handler(struct binder_state *bs,
     size_t len1, len2;
     void *data, *bio_data;
 
-    struct connection *conn[CONNECTION_COUNT];
     uint32_t idx1, idx2;
+
+    LOG_VA("service_handler(%p, %p, %p, %p);\n", bs, txn, msg, reply);
 
     if (txn->target.ptr != BINDER_SERVICE_SMS)
         return -1;
@@ -528,7 +596,7 @@ int service_handler(struct binder_state *bs,
             }
 
             if (create_client(conn[idx1], conn[idx2])) {
-                logger_write("server creation failed.\n");
+                logger_write("client creation failed.\n");
                 free(conn[idx2]);
                 conn[idx2] = NULL;
                 goto err;
@@ -585,7 +653,40 @@ int service_handler(struct binder_state *bs,
                 goto err;
             }
 
+            string_free(str1);
+            string_free(str2);
+
             logger_write("filter created.\n");
+            break;
+
+        case SVC_DELETE_FILTER:
+
+            idx1 = bio_get_uint32(msg);
+            s1 = bio_get_string16(msg, &len1);
+            if (idx1 < 0 || idx1 >= CONNECTION_COUNT || s1 == NULL) {
+                logger_write("indexing failed.\n");
+                goto err;
+            }
+
+            if (conn[idx1] == NULL) {
+                logger_write("connection not exist.\n");
+                goto err;
+            }
+
+            str1 = string16_to_string(s1, len1);
+            if (str1 == NULL || str2 == NULL) {
+                logger_write("conversion failed.\n");
+                goto err;
+            }
+
+            if (filter_delete(conn[idx1], str1)) {
+                logger_write("filter deletion failed.\n");
+                goto err;
+            }
+
+            string_free(str1);
+
+            logger_write("filter deleted.\n");
             break;
 
         case SVC_FILTER_EDIT_DESC:
@@ -593,8 +694,13 @@ int service_handler(struct binder_state *bs,
             idx1 = bio_get_uint32(msg);
             s1 = bio_get_string16(msg, &len1);
             s2 = bio_get_string16(msg, &len2);
-            if (idx1 < 0 || idx1 >= CONNECTION_COUNT || s1 == NULL || s2 == NULL) {
+            if (idx1 < 0 || idx1 >= CONNECTION_COUNT) {
                 logger_write("indexing failed.\n");
+                goto err;
+            }
+
+            if (s1 == NULL || s2 == NULL) {
+                logger_write("argument error.\n");
                 goto err;
             }
 
@@ -615,6 +721,9 @@ int service_handler(struct binder_state *bs,
                 goto err;
             }
 
+            string_free(str1);
+            string_free(str2);
+
             logger_write("filter edited.\n");
             break;
 
@@ -622,8 +731,13 @@ int service_handler(struct binder_state *bs,
 
             idx1 = bio_get_uint32(msg);
             s1 = bio_get_string16(msg, &len1);
-            if (idx1 < 0 || idx1 >= CONNECTION_COUNT || s1 == NULL) {
+            if (idx1 < 0 || idx1 >= CONNECTION_COUNT) {
                 logger_write("indexing failed.\n");
+                goto err;
+            }
+
+            if (s1 == NULL) {
+                logger_write("argument error.\n");
                 goto err;
             }
 
@@ -682,6 +796,7 @@ int service_handler(struct binder_state *bs,
 
             bio_put_uint32(reply, 0);
             bio_put_uint32(reply, len1);
+
             if ((bio_data = bio_alloc(reply, len1)) == NULL) {
                 logger_write("bio_alloc failed.\n");
                 goto err;
@@ -705,16 +820,28 @@ int service_handler(struct binder_state *bs,
             }
 
             len1 = bio_get_uint32(msg);
-            data = bio_get(msg, len1);
-            if (data == NULL || len1 == 0) {
+            if (len1 < 0 || len1 > 0x1000)
+                len1 = 0x1000;
+
+            bio_data = bio_get(msg, len1);
+            if (bio_data == NULL || len1 == 0) {
                 logger_write("get binder buffer failed.\n");
                 goto err;
             }
 
-            if (client_send(conn[idx1], data, len1)) {
+            data = malloc(len1);
+            if (data == NULL)
+                goto err;
+
+            memcpy(data, bio_data, len1);
+
+            if (!fd_is_valid(conn[idx1]->sock) || 
+                client_send(conn[idx1], data, len1)) {
                 logger_write("send failed.\n");
                 goto err;
             }
+
+            free(data);
             break;
 
         default:
@@ -733,6 +860,7 @@ int main(int argc, const char *argv[], const char *envp[]) {
     struct binder_state *bs;
 
     logger_init("/tmp/log.txt");
+    signal(SIGPIPE, SIG_IGN);
 
     bs = binder_open("/dev/binder", 128*1024);
     if (bs == NULL) {
