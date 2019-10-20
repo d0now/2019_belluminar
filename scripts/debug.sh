@@ -1,7 +1,7 @@
 #!/bin/sh
 
 PROJ_DIR="/home/bc/Lab/shrd/project/2019_belluminar"
-INIT_DIR="/tmp/initrd"
+INIT_DIR="/tmp/initrd_dbg"
 
 ## Update super_modern_service
 cd super_modern_service
@@ -16,8 +16,8 @@ cp ./exploit $INIT_DIR/exploit
 cd $PROJ_DIR
 
 ## Pack initrd
-$PROJ_DIR/scripts/pack_initramfs.sh $INIT_DIR $PROJ_DIR/release/initramfs.cpio
+$PROJ_DIR/scripts/pack_initramfs.sh $INIT_DIR $PROJ_DIR/debug/initramfs.cpio
 
 ## spawn
-cd release
+cd debug
 ./start.sh

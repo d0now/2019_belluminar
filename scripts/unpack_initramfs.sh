@@ -1,13 +1,14 @@
 #!/bin/bash
 
-if [ $1 ] && [ -f $1 ]; then
+if [ $1 ] && [ $2 ] && [ -f $1 ]; then
     CPIO_PATH=$(realpath $1);
+    OUT_PATH=$(realpath $2);
 else
-    echo "Usage: $0 [cpio file path]";
+    echo "Usage: $0 [cpio file path] [cpio out path]";
     exit
 fi
 
-WORKDIR="/tmp/initrd"
+WORKDIR=$OUT_PATH
 ORIGDIR=`pwd`
 
 if [ -d $WORKDIR ]; then
