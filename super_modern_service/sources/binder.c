@@ -178,7 +178,8 @@ int binder_parse(struct binder_state *bs, struct binder_io *bio,
                 return -1;
             }
             if (func) {
-                unsigned rdata[0x400/4];
+                /* Issue #3 Fix. */
+                unsigned rdata[0x1000/4];
                 struct binder_io msg;
                 struct binder_io reply;
                 int res;

@@ -294,6 +294,9 @@ struct filter *filter_find(struct connection *conn, const char *filter_ip) {
 
     LOG_VA("filter_find(%p, \"%s\") = ", conn, filter_ip);
 
+    /* Issue #1 Fix */
+    found = 0;
+
     if (conn == NULL || filter_ip == NULL)
         goto done;
 
@@ -321,7 +324,6 @@ done:
 int filter_delete(struct connection *conn, const char *filter_ip) {
 
     struct filter *filt;
-    struct sockaddr_in filter_addr;
 
     LOG_VA("filter_delete(%p, \"%s\");", conn, filter_ip);
 
@@ -472,6 +474,11 @@ int create_client(struct connection *server, struct connection *client) {
 
     LOG_VA("create_client(%p, %p);\n", server, client);
 
+    /* Issue #2 Fix */
+    sock = 0;
+    len  = 0;
+    memset(&client_addr, 0, sizeof(client_addr));
+
     if (server == NULL || client == NULL)
         return -1;
 
@@ -526,10 +533,16 @@ int service_handler(struct binder_state *bs,
     char *str1, *str2;
     size_t len1, len2;
     void *data, *bio_data;
-
     uint32_t idx1, idx2;
 
     LOG_VA("service_handler(%p, %p, %p, %p);\n", bs, txn, msg, reply);
+
+    /* Issue #1 Fix */
+    s = NULL; s1 = NULL; s2 = NULL;
+    str1 = NULL; str2 = NULL;
+    len1 = 0; len2 = 0;
+    data = NULL; bio_data = NULL;
+    idx1 = 0; idx2 = 0;
 
     if (txn->target.ptr != BINDER_SERVICE_SMS)
         return -1;
