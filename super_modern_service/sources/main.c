@@ -476,7 +476,7 @@ int create_client(struct connection *server, struct connection *client) {
 
     /* Issue #2 Fix */
     sock = 0;
-    len  = 0;
+    len  = sizeof(client_addr);
     memset(&client_addr, 0, sizeof(client_addr));
 
     if (server == NULL || client == NULL)
